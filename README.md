@@ -1,2 +1,2 @@
-# mfapy
-MultiFractal Analysis with Python
+# pymfa
+Python for MultiFractal Analysis
