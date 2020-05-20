@@ -512,7 +512,7 @@ def emdmfdfa(data, emd='emd', scales=[], qorder=range(-10,11), with_zero_q=True,
     """
     ***
     * based on
-    * 1. "Introduction to multifractal detrended fluctuation analysis in Matlab", 
+    * 1. "Introduction to multifractal detrended fluctuation analysis in Matlab",
     *  	E. A. F. Ihlen, Front. Physio. 3, 141 (2012)
     * 2. "Multifractal detrended fluctuation analysis of nonstationary time series",
     *	J. W. Kantelhardt, S. A. Zschiegner, E. Koscielny-Bundec, S. Havlin,
