@@ -508,6 +508,254 @@ def get_spectrum(dicto, m=None, full=False, with_q_zero=True):
     return ret
 
 
+def emdmfdfa(data, emd='emd', scales=[], qorder=range(-10,11), with_zero_q=True, shuffle=False, raw_data=False, ndiff=None, walking_window=None, quiet=True):
+    """
+    ***
+    * based on
+    * 1. "Introduction to multifractal detrended fluctuation analysis in Matlab", 
+    *  	E. A. F. Ihlen, Front. Physio. 3, 141 (2012)
+    * 2. "Multifractal detrended fluctuation analysis of nonstationary time series",
+    *	J. W. Kantelhardt, S. A. Zschiegner, E. Koscielny-Bundec, S. Havlin,
+    *	A. Bunde and H. E. Stanley, Phys. A 316, 87 (2002)
+    * 3. "Modified detrended fluctuation analysis based on empirical mode decomposition
+    * for the characterization of anti-persistent processes."
+    * Qian XY, Gu GF, Zhou WX Physica A 390, 4388 (2011)
+    ***
+
+    Funkcja obliczajaca szereg parametrow charakteryzujacych szereg czasowy.
+    Analiza oparta jest na zalozeniu multifraktalnych wlasnosci szeregu. W wyniku
+    obliczany jest wykladnik Hursta rzedu 'q' (q-order Hurst exponent).
+
+    INPUT:
+      data    - dane w postaci listy lub numpy.array zawierajace badany szereg czasowy
+      	        (1D, zakladamy uporzadkowanie w czasie);
+      emd     - typ emd: emd, eemd, ceemdan
+      scales  - lista zawierajaca wielkosci okien branych w analizie do obliczania
+      		wykladnika Hursta. Powinny zawierac potegi liczby 2;
+		jezeli lista jest pusta (domyslnie) skale obliczane sa automatycznie;
+      qorder  - lista wartosci dla ktorych obliczany jest RMS rzedu q oraz
+      		odpowiadajacy mu wykladnik Hursta rzedu q;
+		domyslnie qorder=range(-5,6,2);
+      with_zero_q - wartosc decydujaca czy obliczc wykladnik Hursta (i cala reszte)
+                    dla q = 0;
+		    True - (domyslnie) oblicza F(q=0) jezeli takowa zawarta jest w liscie qorder,
+		    False - pomija (lub usuwa) z listy qorder wartosc q=0;
+      shuffle - bazujemy na danych oryginalnych, czy przetasowanych losowo;
+      		ma to na celu sprawdzenie, czy multifraktalne charakterystyki
+		pochodza z korelacji dalekozasiegowych, czy z szerokiego
+		rozkladu gestosci prawdopodobienstwa (jezeli multifraktalnosc
+		bierze sie z korelacji, to zniknie):
+		dla pomieszanych danych;
+      		True - miesza losowo dane przed obliczaniem charakterystyk,
+		False - (domyslnie) pracuje na oryginalnych danych;
+      ndiff - roznicowanie danych, obliczanie przyrostow oryginalnych danych,
+	      typowa technika osiagania stacjonarnosci z danych niestacjonarnych:
+	      None - (domyslnie) pracuje na oryginalnych danych
+	      1,2,3,... - stopien roznicowania
+      raw_data - definiuje dane ktore poddajemy analizie
+                 True - oblicza charakterystyki dla danych oryginalnych (po odjeciu sredniej)
+                 False - (domyslnie) oblicza charakterystyki dla danych scalkowanych (cumsum)
+      walking_window - definiuje nalozenie sie segmentow podczas obliczania Fq na siebie
+                       None - (domyslnie) segmenty rozdzielne
+		       1,2,3,... - nakladajace sie segmenty, jest to krok z jakim segment ma
+		       podrozowac po danych
+
+    OUTPUT:
+
+      Slownik
+      {'Fq':Fq, 'RMS':RMS, 'qRMS':qRMS, 'm':emd,
+      	'scales':scales, 'q':qorder, 'data':data, 'Hq':Hq,
+	'tq':tq, 'hq':hq, 'Dq':Dq}
+
+      dane wejsciowe:
+      m      - l
+
+      ista rzedow wielomianow uzytych do dopasowania polyfit-em: dict['m']
+      scales - lista wielkosci okien (skal) uzytych w analizie, skala
+      	       16 <= s <= max(len(data)), zawsze potega liczby 2: dict['scales']
+      q      - lista wykladnikow uzytych do okreslenia rzedu qRMS, Fq i Hq; nie
+      	       zawiera liczby 0: dict['q']
+      data   - lista trzymajaca dane: dict['data']
+
+      dane z analizy:
+      RMS    - slownik; trzyma lokalny trend dopasowany wielomianem 'm'-tego rzedu dla
+      	       danej skali 's' dla calosci danych (obcietych do wielokrotnosci dlugosci
+	       okna):  dict['RMS'][m][s]
+      qRMS   - slownik; zwraca lokalny trend rzedu 'q' - funkcje probkojaca gdzie w
+               szeregu wystepuja duze (duze dodatnie q) i male (ujemne q) fluktuacje
+	       dla dopasowania wielomianem rzedu 'm', okien o skali (wielkosci) 's':
+	       dict['qRMS'][m][s][q]
+      Fq     - slownik; funkcja fluktuacji rzedu 'q' dla danego rzedu dopasowania
+	       wielomianu 'm' i skali 's' (wielkosci okien): dict['Fq'][m][s][q]
+      Hq     - slownik; zwraca liniowe (y=ax+b) dopasowanie do log(Fq) vs log(scales)
+      	       dla rzedow q i m (jak wyzej): wykladnik Hursta rzedu q jest pierwszym
+	       elementem dopasowania: Hq = a = dict['Hq'][m][q][0], b = dict['Hq'][m][q][1]
+      tq     - slownik; wykladnik masowy rzedu q (q-order mass exponent): dict['tq'][m][q]
+      hq     - slownik; natezenie osobliwosci rzedu q lub wykladnik Hoersta (q-order
+      	       singularity strenght): dict['hq'][m][q]
+      Dq     - slownik; wymiar osobliwosci rzedu q (q-order singularity dimension):
+               dict['Dq'][m][q]
+
+    EXAMPLES:
+      zakladamy, ze szereg mamy w liscie 'dane' (moze ty byc lista pythonowa lub
+      ndarray numpy)
+
+      sage: dict_mfdfa1 = mfdfa1(dane)
+        zwroci nam slownik wielkosci dla m = 1, wielkosci okien scales=[16,32,64,128] oraz
+        wykladnikow dopasowania RMS rzedu q=[-3,-2,-1,1,2,3]
+
+      sage: max_range = numpy.floor(numpy.log2(dane/10)) + 2
+      sage: _sca = [2**i for i in range(4,max_range)]
+      sage: _q = range(-9,0)+range(1,10)
+      sage: dict_emdmfdfa = emdmfdfa(dane, emd='emd', scales=_sca, qorder=_q)
+        zwroci nam slownik wielkosci dla m = [1,2,3] (liniowe, kwadratowe i szescianowe
+	dopasowanie), wielkosci okien scales=[16,32,64,128,...,MAX2] (od 16 az do okna
+	o szerokosci mieszczacej sie tylko raz w obrebie danych), oraz wykladnikow
+	dopasowania RMS rzedu q=[-9,-8,-7,-6,-5,-4,-3,-2,-1,1,2,3,4,5,6,7,8,9]
+
+	"""
+
+    import numpy, warnings, pyeemd
+
+    # numpy.array
+    X = numpy.array(data)
+
+    # roznicowanie danych (do stacjonarnosci)
+    if ndiff != None:
+      X = numpy.diff(X, n=ndiff)
+
+    # charakterystyki dla pomieszanych danych
+    if shuffle:
+      numpy.random.shuffle(X)
+
+    X = X - numpy.mean(X)
+    # raw or integrated data
+    if not raw_data:
+      X = numpy.cumsum(X)
+
+    # spr czy jest 0 w potegach i usunac na zyczenie...
+    if not with_zero_q and 0 in qorder: qorder.remove(0)
+
+    #automatic scales
+    if scales == []:
+      scales = [2**i for i in range(4,int(numpy.floor(numpy.log2(len(data)/10))) + 2)]
+
+    RMS_m = []
+    qRMS_m = []
+    Fq_m = []
+    for m in [emd]:
+        """rzad wielomianu do dopasowania"""
+
+        RMS_scale = []
+        qRMS_scale = []
+        Fq_scale = []
+        for ns in scales:
+
+	    if walking_window == None:
+	      step = ns
+              segments = int(numpy.floor(len(X)/ns))
+	    else:
+	      assert(0 < walking_window < ns)
+	      step = walking_window
+	      segments = int(numpy.floor(len(X)/step)) - ns - 1
+
+	    if not quiet:
+	      print "len(X) %d, step %d, segments %d, step*segments %d"%(len(X), step, segments, step*segments)
+
+            RMS_dla_skali = []
+            for v in range(segments):
+		idx_start = v * step
+		idx_stop  = idx_start + ns
+
+		# EMD - based detrending
+		# see: Quian XY, et al. Physica A 390 4388 (2011)
+		if emd == 'ceemdan':
+		  imfs = pyeemd.ceemdan(X[idx_start:idx_stop])
+		elif emd == 'eemd':
+		  imfs = pyeemd.eemd(X[idx_start:idx_stop])
+		else:
+		  imfs = pyeemd.emd(X[idx_start:idx_stop])
+		# r = imfs[-1]
+		r = X[idx_start:idx_stop] - reduce(numpy.add, imfs[:-1])
+		_b = numpy.sqrt(numpy.mean((X[idx_start:idx_stop] - r) ** 2))
+  		# ***
+                RMS_dla_skali.append(_b)
+
+            qRMS_dla_skali = []
+            for q in qorder:
+	      if -0.001 < q < 0.001:
+		qRMS_dla_skali.append(numpy.array(RMS_dla_skali) ** 2)
+	      else:
+                qRMS_dla_skali.append(numpy.array(RMS_dla_skali) ** (float(q)))
+		# Tu lekkie wyjasnienie na przyszlosc: tu nie ma q/2 bo wyzej (nad ***
+		# jest spierwiastkowane RMS od razu.
+            qRMS_dict_dla_skali = dict(zip(qorder, qRMS_dla_skali))
+
+            Fq_dla_skali = []
+            for q in qorder:
+	        if -0.001 < q < 0.001:
+                    Fq_dla_skali.append(numpy.exp(0.5*numpy.mean(numpy.log(qRMS_dict_dla_skali[q]))))
+                else:
+                    Fq_dla_skali.append(numpy.mean(qRMS_dict_dla_skali[q])**(1.0/float(q)))
+
+            Fq_dict_dla_skali = dict(zip(qorder,Fq_dla_skali))
+
+            RMS_scale.append(RMS_dla_skali)
+            qRMS_scale.append(qRMS_dict_dla_skali)
+            Fq_scale.append(Fq_dict_dla_skali)
+
+        RMS_dict_scale = dict(zip(scales,RMS_scale))
+        qRMS_dict_scale = dict(zip(scales,qRMS_scale))
+        Fq_dict_scale = dict(zip(scales,Fq_scale))
+
+        Fq_m.append(Fq_dict_scale)
+        RMS_m.append(RMS_dict_scale)
+        qRMS_m.append(qRMS_dict_scale)
+
+    Fq = dict(zip([emd],Fq_m))
+    qRMS = dict(zip([emd],qRMS_m))
+    RMS = dict(zip([emd],RMS_m))
+
+    Hq_m = []
+    tq_m = []
+    hq_m = []
+    Dq_m = []
+    for m in [emd]:
+        Fq_qorder = dict(zip(qorder,[sorted([Fq[m][i][j] for i in scales]) for j in qorder]))
+        Hq_qorder = []
+        tq_qorder = []
+        for q in qorder:
+            C = numpy.polyfit(numpy.log2(numpy.array(scales)), numpy.log2(numpy.array(Fq_qorder[q])),1)
+            Hq_qorder.append(C)
+            tq_qorder.append(C.tolist()[0] * q - 1.0)
+        Hq_m.append(dict(zip(qorder,Hq_qorder)))
+        tq_m.append(dict(zip(qorder,tq_qorder)))
+
+        hq_qorder = numpy.diff(tq_qorder)/numpy.diff(qorder)
+        hq_m.append(dict(zip(qorder[:-1],hq_qorder.tolist())))
+        Dq_m.append(dict(zip(qorder[:-1],(numpy.array(qorder[:-1])*hq_qorder) - numpy.array(tq_qorder[:-1]))))
+
+    Hq = dict(zip([emd], Hq_m)) # q-order Hurst exponent
+    tq = dict(zip([emd], tq_m)) # q-order mass exponent
+    hq = dict(zip([emd], hq_m)) # q-order singularity exponent (Hoelder exponent)
+    Dq = dict(zip([emd], Dq_m)) # q-order singularity dimension
+
+    return {
+	'data':data.tolist(),
+	'BW':X.tolist(),
+	'emd':emd,
+	'scales':scales,
+	'q':qorder,
+	'Fq':Fq,
+	'RMS':RMS,
+	'qRMS':qRMS,
+	'Hq':Hq,
+	'tq':tq,
+	'hq':hq,
+	'Dq':Dq,
+	}
+
+
 ################
 ### The below located function is here for some unknown historical reason
 ### anything it caclulates is redundant and can be found in the fmfssc
