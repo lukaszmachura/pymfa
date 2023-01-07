@@ -1005,4 +1005,4 @@ def mfdfa(data, polyorder=[1], scales=[], qorder=list(range(-15,16)),
 
 
 if __name__ == "__main__":
-    print("please import\nimport mfa")
+    print("first\nimport mfa")
